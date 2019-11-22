@@ -15,6 +15,7 @@ import io.ktor.response.respond
 import io.ktor.routing.get
 import io.ktor.routing.post
 import io.ktor.routing.routing
+import io.ktor.server.netty.Netty
 import io.ktor.util.InternalAPI
 import io.ktor.util.encodeBase64
 import io.ktor.util.hex
@@ -28,110 +29,113 @@ fun main(args: Array<String>): Unit = io.ktor.server.netty.EngineMain.main(args)
 @Suppress("unused") // Referenced in application.conf
 @kotlin.jvm.JvmOverloads
 fun Application.module(testing: Boolean = false) {
-    install(Compression) {
-        gzip {
-            priority = 1.0
+    val port = System.getenv("PORT")?.toInt() ?: 8888
+    io.ktor.server.engine.embeddedServer(Netty, port) {
+        install(Compression) {
+            gzip {
+                priority = 1.0
+            }
+            deflate {
+                priority = 10.0
+                minimumSize(1024) // condition
+            }
         }
-        deflate {
-            priority = 10.0
-            minimumSize(1024) // condition
+
+        install(AutoHeadResponse)
+
+        install(CallLogging) {
+            level = Level.INFO
+            filter { call -> call.request.path().startsWith("/") }
         }
-    }
 
-    install(AutoHeadResponse)
+        install(DefaultHeaders) {
+            header("X-Engine", "Ktor") // will send this header with each response
+        }
 
-    install(CallLogging) {
-        level = Level.INFO
-        filter { call -> call.request.path().startsWith("/") }
-    }
-
-    install(DefaultHeaders) {
-        header("X-Engine", "Ktor") // will send this header with each response
-    }
-
-    routing {
-        get("/") {
-            call.respondHtml {
-                body {
-                    h1 { +"Welcome to the Slim JPG demo page!" }
-                    p { +"Upload a picture and it will be optimized." }
-                    form("/optimize", encType = FormEncType.multipartFormData, method = FormMethod.post) {
-                        p {
-                            label { +"Picture: " }
-                            fileInput { name = "picture" }
-                        }
-                        p {
-                            submitInput { value = "Optimize" }
+        routing {
+            get("/") {
+                call.respondHtml {
+                    body {
+                        h1 { +"Welcome to the Slim JPG demo page!" }
+                        p { +"Upload a picture and it will be optimized." }
+                        form("/optimize", encType = FormEncType.multipartFormData, method = FormMethod.post) {
+                            p {
+                                label { +"Picture: " }
+                                fileInput { name = "picture" }
+                            }
+                            p {
+                                submitInput { value = "Optimize" }
+                            }
                         }
                     }
                 }
             }
-        }
 
-        post("/optimize") {
-            val multipart = call.receiveMultipart()
-            val out = arrayListOf<String>()
-            var sourceContentType = ""
-            var sourceContent = ""
-            var optimizedContent = ""
+            post("/optimize") {
+                val multipart = call.receiveMultipart()
+                val out = arrayListOf<String>()
+                var sourceContentType = ""
+                var sourceContent = ""
+                var optimizedContent = ""
 
-            multipart.forEachPart { part ->
-                out += when (part) {
-                    is PartData.FormItem -> {
-                        "FormItem(${part.name},${part.value})"
-                    }
-                    is PartData.FileItem -> {
-                        sourceContentType = part.contentType.toString()
-                        val sourceImage = part.streamProvider().readBytes()
-                        val optimizationResult = SlimJpg.file(sourceImage)
-                            .maxFileWeightInKB(50)
-                            .maxVisualDiff(1.0)
-                            .keepMetadata()
-                            .optimize()
-                        val optimizedImage = optimizationResult.picture
-
-                        sourceContent = sourceImage.encodeBase64()
-                        optimizedContent = optimizedImage.encodeBase64()
-
-                        if (sourceContent.equals(optimizedContent)) {
-                            println("Content is the same")
-                        } else {
-                            println("Content is different")
+                multipart.forEachPart { part ->
+                    out += when (part) {
+                        is PartData.FormItem -> {
+                            "FormItem(${part.name},${part.value})"
                         }
+                        is PartData.FileItem -> {
+                            sourceContentType = part.contentType.toString()
+                            val sourceImage = part.streamProvider().readBytes()
+                            val optimizationResult = SlimJpg.file(sourceImage)
+                                .maxFileWeightInKB(50)
+                                .maxVisualDiff(1.0)
+                                .keepMetadata()
+                                .optimize()
+                            val optimizedImage = optimizationResult.picture
 
-                        "FileItem(${part.name},${part.originalFileName},${hex(sourceImage)})"
+                            sourceContent = sourceImage.encodeBase64()
+                            optimizedContent = optimizedImage.encodeBase64()
+
+                            if (sourceContent.equals(optimizedContent)) {
+                                println("Content is the same")
+                            } else {
+                                println("Content is different")
+                            }
+
+                            "FileItem(${part.name},${part.originalFileName},${hex(sourceImage)})"
+                        }
+                        is PartData.BinaryItem -> {
+                            "BinaryItem(${part.name},${hex(part.provider().readBytes())})"
+                        }
                     }
-                    is PartData.BinaryItem -> {
-                        "BinaryItem(${part.name},${hex(part.provider().readBytes())})"
+
+                    part.dispose()
+                }
+                call.respondHtml {
+                    body {
+                        h1 { +"This is your picture" }
+                        img {
+                            src = "data:$sourceContentType;base64,$sourceContent"
+                        }
+                        h1 { +"This is your optimized picture" }
+                        img {
+                            src = "data:image/jpeg;base64,$optimizedContent"
+                        }
                     }
                 }
-
-                part.dispose()
             }
-            call.respondHtml {
-                body {
-                    h1 { +"This is your picture" }
-                    img {
-                        src = "data:$sourceContentType;base64,$sourceContent"
-                    }
-                    h1 { +"This is your optimized picture" }
-                    img {
-                        src = "data:image/jpeg;base64,$optimizedContent"
-                    }
+
+            install(StatusPages) {
+                exception<AuthenticationException> { cause ->
+                    call.respond(HttpStatusCode.Unauthorized)
                 }
+                exception<AuthorizationException> { cause ->
+                    call.respond(HttpStatusCode.Forbidden)
+                }
+
             }
         }
-
-        install(StatusPages) {
-            exception<AuthenticationException> { cause ->
-                call.respond(HttpStatusCode.Unauthorized)
-            }
-            exception<AuthorizationException> { cause ->
-                call.respond(HttpStatusCode.Forbidden)
-            }
-
-        }
-    }
+    }.start(wait = true)
 }
 
 class AuthenticationException : RuntimeException()

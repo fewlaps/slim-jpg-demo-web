@@ -13,7 +13,7 @@ apply plugin: 'application'
 
 group 'com.fewlaps.slimjpg'
 version '0.0.1'
-mainClassName = "io.ktor.server.netty.EngineMain"
+mainClassName = 'com.fewlaps.slimjpg.Application'
 
 sourceSets {
     main.kotlin.srcDirs = main.java.srcDirs = ['src']
@@ -40,4 +40,8 @@ dependencies {
     compile 'com.twelvemonkeys.imageio:imageio-jpeg:3.4.2'
 
     testCompile "io.ktor:ktor-server-tests:$ktor_version"
+}
+
+task stage {
+    dependsOn installDist
 }

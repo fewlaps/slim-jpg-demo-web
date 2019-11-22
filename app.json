@@ -1,0 +1,5 @@
+{
+  "name": "SlimJPG online",
+  "description": "A demo to try SlimJPG online",
+  "image": "heroku/java"
+}
