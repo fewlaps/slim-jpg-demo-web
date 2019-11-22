@@ -12,10 +12,11 @@ import io.ktor.http.content.streamProvider
 import io.ktor.request.path
 import io.ktor.request.receiveMultipart
 import io.ktor.response.respond
-import io.ktor.response.respondText
 import io.ktor.routing.get
 import io.ktor.routing.post
 import io.ktor.routing.routing
+import io.ktor.util.InternalAPI
+import io.ktor.util.encodeBase64
 import io.ktor.util.hex
 import kotlinx.html.*
 import kotlinx.io.core.readBytes
@@ -23,6 +24,7 @@ import org.slf4j.event.Level
 
 fun main(args: Array<String>): Unit = io.ktor.server.netty.EngineMain.main(args)
 
+@InternalAPI
 @Suppress("unused") // Referenced in application.conf
 @kotlin.jvm.JvmOverloads
 fun Application.module(testing: Boolean = false) {
@@ -69,14 +71,35 @@ fun Application.module(testing: Boolean = false) {
         post("/optimize") {
             val multipart = call.receiveMultipart()
             val out = arrayListOf<String>()
+            var sourceContentType = ""
+            var sourceContent = ""
+            var optimizedContent = ""
+
             multipart.forEachPart { part ->
                 out += when (part) {
                     is PartData.FormItem -> {
                         "FormItem(${part.name},${part.value})"
                     }
                     is PartData.FileItem -> {
-                        val bytes = part.streamProvider().readBytes()
-                        "FileItem(${part.name},${part.originalFileName},${hex(bytes)})"
+                        sourceContentType = part.contentType.toString()
+                        val sourceImage = part.streamProvider().readBytes()
+                        val optimizationResult = SlimJpg.file(sourceImage)
+                            .maxFileWeightInKB(50)
+                            .maxVisualDiff(1.0)
+                            .keepMetadata()
+                            .optimize()
+                        val optimizedImage = optimizationResult.picture
+
+                        sourceContent = sourceImage.encodeBase64()
+                        optimizedContent = optimizedImage.encodeBase64()
+
+                        if (sourceContent.equals(optimizedContent)) {
+                            println("Content is the same")
+                        } else {
+                            println("Content is different")
+                        }
+
+                        "FileItem(${part.name},${part.originalFileName},${hex(sourceImage)})"
                     }
                     is PartData.BinaryItem -> {
                         "BinaryItem(${part.name},${hex(part.provider().readBytes())})"
@@ -85,7 +108,18 @@ fun Application.module(testing: Boolean = false) {
 
                 part.dispose()
             }
-            call.respondText(out.joinToString("; "))
+            call.respondHtml {
+                body {
+                    h1 { +"This is your picture" }
+                    img {
+                        src = "data:$sourceContentType;base64,$sourceContent"
+                    }
+                    h1 { +"This is your optimized picture" }
+                    img {
+                        src = "data:image/jpeg;base64,$optimizedContent"
+                    }
+                }
+            }
         }
 
         install(StatusPages) {
