@@ -76,7 +76,10 @@ fun Application.module(testing: Boolean = false) {
                 val out = arrayListOf<String>()
                 var sourceContentType = ""
                 var sourceContent = ""
+                var sourceWeight = 0
                 var optimizedContent = ""
+                var optimizedWeight = 0
+                var optimizedJpegQuality = 0
 
                 multipart.forEachPart { part ->
                     out += when (part) {
@@ -94,7 +97,10 @@ fun Application.module(testing: Boolean = false) {
                             val optimizedImage = optimizationResult.picture
 
                             sourceContent = sourceImage.encodeBase64()
+                            sourceWeight = sourceImage.size
                             optimizedContent = optimizedImage.encodeBase64()
+                            optimizedWeight = optimizedImage.size
+                            optimizedJpegQuality = optimizationResult.jpegQualityUsed
 
                             if (optimizationResult.internalError != null) {
                                 println("The optimization failed")
@@ -116,13 +122,23 @@ fun Application.module(testing: Boolean = false) {
                 }
                 call.respondHtml {
                     body {
-                        h1 { +"This is your picture" }
-                        img {
-                            src = "data:$sourceContentType;base64,$sourceContent"
+                        div("juxtapose") {
+                            img {
+                                src = "data:$sourceContentType;base64,$sourceContent"
+                                attributes.put("data-label", "Original size: ${sourceWeight / 1024} KB")
+                            }
+                            img {
+                                src = "data:image/jpeg;base64,$optimizedContent"
+                                attributes.put(
+                                    "data-label",
+                                    "Optimized size: ${optimizedWeight / 1024} KB. Applied JPG quality: ${optimizedJpegQuality}%"
+                                )
+                            }
                         }
-                        h1 { +"This is your optimized picture" }
-                        img {
-                            src = "data:image/jpeg;base64,$optimizedContent"
+                        script { src = "https://cdn.knightlab.com/libs/juxtapose/latest/js/juxtapose.min.js" }
+                        link {
+                            rel = "stylesheet";
+                            href = "https://cdn.knightlab.com/libs/juxtapose/latest/css/juxtapose.css"
                         }
                     }
                 }
