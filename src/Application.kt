@@ -102,6 +102,7 @@ fun Application.module(testing: Boolean = false) {
                                 println("The exception was ${optimizationResult.internalError?.message}");
                             } else {
                                 println("The optimization was a success")
+                                println("Optimization values: $optimizationResult")
                             }
 
                             "FileItem(${part.name},${part.originalFileName},${hex(sourceImage)})"
