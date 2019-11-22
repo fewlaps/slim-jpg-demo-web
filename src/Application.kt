@@ -96,10 +96,12 @@ fun Application.module(testing: Boolean = false) {
                             sourceContent = sourceImage.encodeBase64()
                             optimizedContent = optimizedImage.encodeBase64()
 
-                            if (sourceContent.equals(optimizedContent)) {
-                                println("Content is the same")
+                            if (optimizationResult.internalError != null) {
+                                println("The optimization failed")
+                                println("The source was a $sourceContentType")
+                                println("The exception was ${optimizationResult.internalError?.message}");
                             } else {
-                                println("Content is different")
+                                println("The optimization was a success")
                             }
 
                             "FileItem(${part.name},${part.originalFileName},${hex(sourceImage)})"
