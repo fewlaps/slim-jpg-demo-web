@@ -1,5 +1,6 @@
 package com.fewlaps.slimjpg
 
+import com.fewlaps.slimjpg.core.util.ReadableUtils
 import io.ktor.application.Application
 import io.ktor.application.call
 import io.ktor.application.install
@@ -22,6 +23,7 @@ import io.ktor.util.hex
 import kotlinx.html.*
 import kotlinx.io.core.readBytes
 import org.slf4j.event.Level
+import java.text.NumberFormat
 
 fun main(args: Array<String>): Unit = io.ktor.server.netty.EngineMain.main(args)
 
@@ -79,7 +81,9 @@ fun Application.module(testing: Boolean = false) {
                 var sourceWeight = 0
                 var optimizedContent = ""
                 var optimizedWeight = 0
-                var optimizedJpegQuality = 0
+                var optimizedRatio = 0.0
+                var explanationForTheUser = ""
+                lateinit var optimizationResult: com.fewlaps.slimjpg.core.Result
 
                 multipart.forEachPart { part ->
                     out += when (part) {
@@ -89,10 +93,8 @@ fun Application.module(testing: Boolean = false) {
                         is PartData.FileItem -> {
                             sourceContentType = part.contentType.toString()
                             val sourceImage = part.streamProvider().readBytes()
-                            val optimizationResult = SlimJpg.file(sourceImage)
-                                .maxFileWeightInKB(50)
-                                .maxVisualDiff(1.0)
-                                .keepMetadata()
+                            optimizationResult = SlimJpg.file(sourceImage)
+                                .maxVisualDiff(0.5)
                                 .optimize()
                             val optimizedImage = optimizationResult.picture
 
@@ -100,15 +102,37 @@ fun Application.module(testing: Boolean = false) {
                             sourceWeight = sourceImage.size
                             optimizedContent = optimizedImage.encodeBase64()
                             optimizedWeight = optimizedImage.size
-                            optimizedJpegQuality = optimizationResult.jpegQualityUsed
+                            optimizedRatio = optimizationResult.savedRatio
 
                             if (optimizationResult.internalError != null) {
                                 println("The optimization failed")
                                 println("The source was a $sourceContentType")
                                 println("The exception was ${optimizationResult.internalError?.message}");
-                            } else {
-                                println("The optimization was a success")
+                                explanationForTheUser =
+                                    "The optimization failed. " +
+                                            "There's something in your picture that the Java Image I/O package hasn't liked. " +
+                                            "It told us that the error was '${optimizationResult.internalError?.message}'. Please, feel free to file an issue including this error and the picture you tried to compress."
+                            } else if (sourceContent != optimizedContent) {
+                                println("The optimization was a success and returned a different picture")
                                 println("Optimization values: $optimizationResult")
+                                explanationForTheUser =
+                                    "The optimization was a success. " +
+                                            "It took ${NumberFormat.getInstance().format(optimizationResult.elapsedTime)}ms, " +
+                                            "saved ${ReadableUtils.formatFileSize(optimizationResult.savedBytes)} " +
+                                            "which is the ${ReadableUtils.formatPercentage(optimizationResult.savedRatio)} of the file, " +
+                                            "and applied a JPEG quality of ${optimizationResult.jpegQualityUsed}%."
+                                if (optimizationResult.savedRatio < 0) {
+                                    explanationForTheUser += " Why is the optimized file bigger than the original one? It's because the original one wasn't a JPG. That conversion from ${readeableContentType(
+                                        sourceContentType
+                                    )} to JPG gave a bigger JPG. Oooh, you touched the limits!"
+                                }
+                            } else {
+                                println("The optimization was a success and returned a different file")
+                                println("Optimization values: $optimizationResult")
+                                explanationForTheUser =
+                                    "The optimization was a success... but it returned exactly the same picture. " +
+                                            "It happens when the original file was so well optimized that there's nothing better to do without losing any quality. " +
+                                            "We call it artifical intelligence because being humble is too much."
                             }
 
                             "FileItem(${part.name},${part.originalFileName},${hex(sourceImage)})"
@@ -122,17 +146,34 @@ fun Application.module(testing: Boolean = false) {
                 }
                 call.respondHtml {
                     body {
+                        h1 { +"Here's your lovely picture" }
+                        p { +explanationForTheUser }
+                        if (optimizationResult.internalError != null) {
+                            a(
+                                href = "https://github.com/Fewlaps/slim-jpg/issues/new",
+                                target = "_blank"
+                            ) { +"File an issue to the core of SlimJPG" }
+                        }
+                        form("/optimize", encType = FormEncType.multipartFormData, method = FormMethod.post) {
+                            p {
+                                label { +"Choose one more picture: " }
+                                fileInput { name = "picture" }
+                            }
+                            p {
+                                submitInput { value = "Optimize" }
+                            }
+                        }
                         div("juxtapose") {
                             img {
                                 src = "data:$sourceContentType;base64,$sourceContent"
-                                attributes.put("data-label", "Original size: ${sourceWeight / 1024} KB")
+                                attributes["data-label"] = "Original size: ${sourceWeight / 1024} KB"
                             }
                             img {
                                 src = "data:image/jpeg;base64,$optimizedContent"
-                                attributes.put(
-                                    "data-label",
-                                    "Optimized size: ${optimizedWeight / 1024} KB. Applied JPG quality: ${optimizedJpegQuality}%"
-                                )
+                                attributes["data-label"] =
+                                    "Optimized size: ${optimizedWeight / 1024} KB (${ReadableUtils.formatPercentage(
+                                        1 - optimizedRatio
+                                    )})"
                             }
                         }
                         script { src = "https://cdn.knightlab.com/libs/juxtapose/latest/js/juxtapose.min.js" }
@@ -155,6 +196,10 @@ fun Application.module(testing: Boolean = false) {
             }
         }
     }.start(wait = true)
+}
+
+private fun readeableContentType(sourceContentType: String): String {
+    return sourceContentType.substring(sourceContentType.indexOf("/") + 1, sourceContentType.length).toUpperCase()
 }
 
 class AuthenticationException : RuntimeException()
